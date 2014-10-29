@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -38,19 +41,65 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	err := decoder.Decode(&update)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+		return
 	}
 	obj_id := strings.ToLower(r.URL.Path[1:])
 	err = s.Node.Lock(obj_id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+		return
+	}
+	defer s.Node.Unlock(obj_id)
+
+	resp, err := http.Head(buildUrl(s.Upstream, obj_id))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+		return
+	}
+	if resp.StatusCode == 404 {
+		if !update.NotExist {
+			http.Error(w, "Specified value not existing, but does", 400)
+			return
+		}
+	} else if resp.StatusCode == 200 {
+		if resp.Header.Get("X-sha1") != update.PrevValue {
+			http.Error(w, "PrevValue doesn't match current value", 400)
+			return
+		}
+	}
+	data, err := base64.StdEncoding.DecodeString(update.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+		return
+	}
+	pResp, err := http.Post(buildUrl(s.Upstream, obj_id), "multipart/upload", bytes.NewBuffer(data))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+		return
+	}
+	if pResp.StatusCode != 200 {
+		http.Error(w, "upstream gave non 200 response", 500)
+		return
 	}
 
-	defer s.Node.Unlock(obj_id)
+	pResp.Write(w)
 }
 
 // block if there is a lock outstanding
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
+	obj_id := strings.ToLower(r.URL.Path[1:])
+	err := s.Node.Lock(obj_id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Bad Request: %v", err.Error()), 500)
+	}
+	defer s.Node.Unlock(obj_id)
 
+	resp, err := http.Get(buildUrl(s.Upstream, obj_id))
+	resp.Write(w)
+}
+
+func buildUrl(upstream, path string) string {
+	return filepath.Join(upstream, path)
 }
 
 func (s *Server) Serve(w http.ResponseWriter, r *http.Request) {

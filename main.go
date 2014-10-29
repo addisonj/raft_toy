@@ -18,6 +18,7 @@ var (
 	addr      = flag.String("addr", ":5000", "addres to listen on")
 	bootstrap = flag.Bool("bootstrap", false, "bootstrap the nodes")
 	dir       = flag.String("dir", "", "directory to store data in")
+	upstream  = flag.String("upstream", "http://localhost:8080", "upstream path to write to")
 )
 
 type Config struct {
@@ -60,6 +61,6 @@ func main() {
 		node.Stop()
 		os.Exit(0)
 	}()
-	http.ListenAndServe(*addr, CreateServer("127.0.0.1:8080", node, logger))
+	http.ListenAndServe(*addr, CreateServer(*upstream, node, logger))
 	logger.Notice("exiting")
 }

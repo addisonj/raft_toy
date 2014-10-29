@@ -11,15 +11,15 @@ import (
 )
 
 type lockFSM struct {
-	locks  map[string]bool
-	mutex  *sync.Mutex
-	logger *spacelog.Logger
+	locks   map[string]bool
+	mutexes map[string]*sync.Mutex
+	logger  *spacelog.Logger
 }
 
 func NewFSM(logger *spacelog.Logger) *lockFSM {
 	lfsm := &lockFSM{}
 	lfsm.locks = make(map[string]bool)
-	lfsm.mutex = &sync.Mutex{}
+	lfsm.mutexes = make(map[string]*sync.Mutex)
 	lfsm.logger = logger
 	return lfsm
 }
@@ -28,12 +28,22 @@ func (fsm *lockFSM) Apply(log *raft.Log) interface{} {
 	if err != nil {
 		return err
 	}
-	fsm.mutex.Lock()
-	defer fsm.mutex.Unlock()
 	if msg.Type == LockKey {
+		lock, ok := fsm.mutexes[msg.Key]
+		if !ok {
+			lock = &sync.Mutex{}
+			fsm.mutexes[msg.Key] = lock
+		}
+		lock.Lock()
 		fsm.locks[msg.Key] = true
 	} else if msg.Type == UnlockKey {
+		lock, ok := fsm.mutexes[msg.Key]
+		if !ok {
+			lock := &sync.Mutex{}
+			fsm.mutexes[msg.Key] = lock
+		}
 		fsm.locks[msg.Key] = false
+		lock.Unlock()
 	} else {
 		fsm.logger.Warn("invalid message type, ignoring")
 	}
